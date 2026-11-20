@@ -5,6 +5,7 @@ export type VerificationStep =
   | 'camera_loading'
   | 'camera_capture'
   | 'analyzing'
+  | 'photo_success'
   | 'account_verification';
 
 export type ServerSessionStage =
@@ -14,12 +15,8 @@ export type ServerSessionStage =
 
 export interface VerificationSession {
   protocolCode: string;
-  ipMasked?: string;
   stage: ServerSessionStage;
-  maskedCpf?: string;
   startedAt: string;
   cpfVerifiedAt?: string;
   photoSubmittedAt?: string;
-  capturedPhotoUrl?: string;
-  captureSource?: 'camera' | 'upload' | 'assisted';
 }

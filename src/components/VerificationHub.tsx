@@ -18,8 +18,7 @@ import { motion } from 'motion/react';
 
 interface VerificationHubProps {
   protocolCode: string;
-  maskedCpf?: string;
-  ipMasked?: string;
+  cpfVerified?: boolean;
   onStartVerification: () => void;
   onReplayInitialLoading: () => void;
 }
@@ -37,25 +36,24 @@ const FAQ_ITEMS = [
     id: 'faq-2',
     question: 'O que acontece após enviar a foto?',
     answer:
-      'O app grava seu acesso automaticamente e avança para a tela de Verificação conta de recebedor, mantendo o acompanhamento ativo.',
+      'O app confirma a fotografia e segue para a etapa de Verificação de conta do recebedor aguardando a emissão do código de liberação.',
   },
   {
     id: 'faq-3',
     question: 'Se eu sair do app e voltar depois, perco a etapa?',
     answer:
-      'Não. Sempre que você entrar novamente pelo mesmo acesso, o app retoma diretamente na etapa em andamento.',
+      'Não. O andamento do processo é mantido automaticamente para que você retome exatamente da etapa pendente sem armazenar seus dados pessoais ou imagem.',
   },
 ];
 
 export const VerificationHub: React.FC<VerificationHubProps> = ({
   protocolCode,
-  maskedCpf,
-  ipMasked,
+  cpfVerified = false,
   onStartVerification,
   onReplayInitialLoading,
 }) => {
   const [activeTab, setActiveTab] = useState<AppTab>('inicio');
-  const hasVerifiedCpf = Boolean(maskedCpf);
+  const hasVerifiedCpf = cpfVerified;
 
   return (
     <div className="mx-auto flex min-h-[calc(100dvh-56px)] max-w-5xl flex-col justify-between px-4 pb-24 pt-5 sm:px-6 sm:pb-10 sm:pt-8">
@@ -75,7 +73,7 @@ export const VerificationHub: React.FC<VerificationHubProps> = ({
                 <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
                   <span>
                     {hasVerifiedCpf
-                      ? `CPF ${maskedCpf} identificado`
+                      ? 'CPF validado · Aguardando foto facial'
                       : 'Liberação pendente'}
                   </span>
                   <span className="font-mono-tabular font-medium text-amber-700">
@@ -88,8 +86,9 @@ export const VerificationHub: React.FC<VerificationHubProps> = ({
                 </h1>
 
                 <p className="mt-3 text-sm leading-relaxed text-slate-700 sm:text-base">
-                  Sua liberação de crédito está quase pronta, aguardando o
-                  procedimento processo de liberação.
+                  Está faltando pouco para realizar sua liberação de crédito. Sua
+                  liberação está quase pronta, aguardando o procedimento de
+                  verificação.
                 </p>
 
                 <div className="mt-5 hidden sm:block">
@@ -138,7 +137,7 @@ export const VerificationHub: React.FC<VerificationHubProps> = ({
                         </p>
                         <p className="text-xs text-slate-500">
                           {hasVerifiedCpf
-                            ? `Identificado (${maskedCpf})`
+                            ? 'Etapa de CPF concluída'
                             : 'Identificação automática por CPF válido'}
                         </p>
                       </div>
@@ -336,14 +335,6 @@ export const VerificationHub: React.FC<VerificationHubProps> = ({
                   {protocolCode}
                 </dd>
               </div>
-              {ipMasked && (
-                <div className="flex items-center justify-between gap-2">
-                  <dt className="text-slate-500">Acesso vinculado</dt>
-                  <dd className="font-mono-tabular font-medium text-slate-800">
-                    {ipMasked}
-                  </dd>
-                </div>
-              )}
               <div className="flex items-center justify-between gap-2">
                 <dt className="text-slate-500">Tempo estimado</dt>
                 <dd className="font-mono-tabular font-medium text-slate-800">

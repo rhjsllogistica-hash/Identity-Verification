@@ -9,6 +9,7 @@ import { CpfVerificationStep } from './components/CpfVerificationStep';
 import { Header } from './components/Header';
 import { LoadingStage, LoadingStageItem } from './components/LoadingStage';
 import { MobileCameraCapture } from './components/MobileCameraCapture';
+import { PhotoSuccessStep } from './components/PhotoSuccessStep';
 import { VerificationHub } from './components/VerificationHub';
 import { ServerSessionStage, VerificationSession, VerificationStep } from './types';
 
@@ -21,12 +22,12 @@ const INITIAL_LOADING_STAGES: LoadingStageItem[] = [
   {
     id: 'init-1',
     label: 'Conectando aplicativo',
-    detail: 'Validando canal seguro e registrando acesso',
+    detail: 'Validando canal seguro e sessão do atendimento',
   },
   {
     id: 'init-2',
     label: 'Consultando liberação de crédito',
-    detail: 'Verificando etapa pendente vinculada ao seu IP',
+    detail: 'Verificando etapa pendente do seu atendimento',
   },
   {
     id: 'init-3',
@@ -53,41 +54,38 @@ const CAMERA_LOADING_STAGES: LoadingStageItem[] = [
   },
 ];
 
-const ANALYZING_STAGES: LoadingStageItem[] = [
+const PHOTO_VERIFICATION_STAGES: LoadingStageItem[] = [
   {
     id: 'ana-1',
-    label: 'Enviando fotografia capturada',
-    detail: 'Transmitindo imagem e gravando acesso do recebedor',
+    label: 'Processando captura recebida',
+    detail: 'Analisando imagem em memória temporária',
   },
   {
     id: 'ana-2',
-    label: 'Validando nitidez e rosto',
-    detail: 'Conferindo qualidade da captura facial',
+    label: 'Verificando nitidez e iluminação',
+    detail: 'Conferindo qualidade da foto do recebedor',
   },
   {
     id: 'ana-3',
-    label: 'Iniciando verificação conta de recebedor',
-    detail: 'Encaminhando reconhecimento para conferência da conta',
+    label: 'Validando reconhecimento facial',
+    detail: 'Confirmando aprovação da etapa facial',
   },
   {
     id: 'ana-4',
-    label: 'Salvando continuidade automática',
-    detail: 'Mantendo etapa ativa para os próximos acessos',
+    label: 'Registrando etapa concluída',
+    detail: 'Encaminhando para verificação de conta do recebedor',
   },
 ];
 
 interface ApiSessionResponse {
-  ipMasked?: string;
   protocolCode: string;
   stage: ServerSessionStage;
-  maskedCpf?: string;
   startedAt: string;
   cpfVerifiedAt?: string;
   photoSubmittedAt?: string;
-  capturedPhotoUrl?: string;
 }
 
-const STORAGE_KEY = 'identity_verification_session_v1';
+const STORAGE_KEY = 'identity_verification_stage_v2';
 
 function loadLocalSession(): VerificationSession | null {
   try {
@@ -101,15 +99,15 @@ function loadLocalSession(): VerificationSession | null {
 
 function saveLocalSession(session: VerificationSession): void {
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
-  } catch {
-    // Ignore storage quota errors
-  }
-}
-
-function clearLocalSession(): void {
-  try {
-    window.localStorage.removeItem(STORAGE_KEY);
+    // Store only protocol, stage, and timestamps — never personal CPF or photo
+    const safeSession: VerificationSession = {
+      protocolCode: session.protocolCode,
+      stage: session.stage,
+      startedAt: session.startedAt,
+      cpfVerifiedAt: session.cpfVerifiedAt,
+      photoSubmittedAt: session.photoSubmittedAt,
+    };
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(safeSession));
   } catch {
     // Ignore storage errors
   }
@@ -117,6 +115,9 @@ function clearLocalSession(): void {
 
 export default function App() {
   const [step, setStep] = useState<VerificationStep>('initial_loading');
+  const [transientPhotoPreview, setTransientPhotoPreview] = useState<string | undefined>(
+    undefined
+  );
   const [session, setSession] = useState<VerificationSession>(() => {
     const saved = loadLocalSession();
     if (saved) return saved;
@@ -139,22 +140,17 @@ export default function App() {
       if (!response.ok || !contentType.includes('application/json')) return null;
 
       const data = (await response.json()) as ApiSessionResponse;
-      latestServerStageRef.current = data.stage;
       setSession((prev) => {
-        // Keep local progress if backend is absent or fresh while local already progressed
         const mergedStage =
           data.stage === 'hub' && prev.stage !== 'hub' ? prev.stage : data.stage;
         latestServerStageRef.current = mergedStage;
         return {
           ...prev,
-          ipMasked: data.ipMasked ?? prev.ipMasked,
           protocolCode: data.protocolCode || prev.protocolCode,
           stage: mergedStage,
-          maskedCpf: data.maskedCpf ?? prev.maskedCpf,
           startedAt: data.startedAt || prev.startedAt,
           cpfVerifiedAt: data.cpfVerifiedAt ?? prev.cpfVerifiedAt,
           photoSubmittedAt: data.photoSubmittedAt ?? prev.photoSubmittedAt,
-          capturedPhotoUrl: data.capturedPhotoUrl ?? prev.capturedPhotoUrl,
         };
       });
       if (data.stage === 'account_verification') {
@@ -188,24 +184,23 @@ export default function App() {
       setStep('account_verification');
       return;
     }
-    if (session.stage === 'cpf_verified' && session.maskedCpf) {
+    if (session.stage === 'cpf_verified') {
       setStep('camera_loading');
       return;
     }
     setStep('cpf_entry');
-  }, [session.stage, session.maskedCpf]);
+  }, [session.stage]);
 
   const handleCpfVerified = useCallback(
     (
       _rawCpf: string,
-      maskedCpf: string,
+      _maskedCpf: string,
       serverData?: { protocolCode?: string; cpfVerifiedAt?: string }
     ) => {
       latestServerStageRef.current = 'cpf_verified';
       setSession((prev) => ({
         ...prev,
         stage: 'cpf_verified',
-        maskedCpf,
         protocolCode: serverData?.protocolCode ?? prev.protocolCode,
         cpfVerifiedAt: serverData?.cpfVerifiedAt ?? new Date().toLocaleString('pt-BR'),
       }));
@@ -220,12 +215,12 @@ export default function App() {
   }, []);
 
   const handlePhotoConfirmed = useCallback(
-    async (photoUrl: string, source: 'camera' | 'upload' | 'assisted') => {
+    async (photoUrl: string) => {
+      // Keep photo only in volatile React state during immediate verification display
+      setTransientPhotoPreview(photoUrl);
       latestServerStageRef.current = 'account_verification';
       setSession((prev) => ({
         ...prev,
-        capturedPhotoUrl: photoUrl,
-        captureSource: source,
         stage: 'account_verification',
         photoSubmittedAt: new Date().toLocaleString('pt-BR'),
       }));
@@ -235,7 +230,7 @@ export default function App() {
         const res = await fetch('/api/session/photo', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ capturedPhotoUrl: photoUrl }),
+          body: JSON.stringify({}),
         });
         const contentType = res.headers.get('content-type') || '';
         if (res.ok && contentType.includes('application/json')) {
@@ -243,20 +238,25 @@ export default function App() {
           latestServerStageRef.current = data.stage;
           setSession((prev) => ({
             ...prev,
-            ipMasked: data.ipMasked ?? prev.ipMasked,
             protocolCode: data.protocolCode || prev.protocolCode,
             stage: data.stage,
             photoSubmittedAt: data.photoSubmittedAt ?? prev.photoSubmittedAt,
           }));
         }
       } catch {
-        // State already persisted locally
+        // Stage already persisted locally
       }
     },
     []
   );
 
-  const handleAnalysisComplete = useCallback(() => {
+  const handlePhotoVerificationComplete = useCallback(() => {
+    setStep('photo_success');
+  }, []);
+
+  const handlePhotoSuccessContinue = useCallback(() => {
+    // Discard transient in-memory photo preview once moving to account verification
+    setTransientPhotoPreview(undefined);
     setStep('account_verification');
   }, []);
 
@@ -278,38 +278,6 @@ export default function App() {
     await syncSessionFromServer();
   }, [syncSessionFromServer]);
 
-  const handleResetSession = useCallback(async () => {
-    latestServerStageRef.current = 'hub';
-    clearLocalSession();
-    try {
-      const res = await fetch('/api/session', { method: 'DELETE' });
-      const contentType = res.headers.get('content-type') || '';
-      if (res.ok && contentType.includes('application/json')) {
-        const data = (await res.json()) as ApiSessionResponse;
-        setSession({
-          ipMasked: data.ipMasked,
-          protocolCode: data.protocolCode,
-          stage: 'hub',
-          startedAt: data.startedAt,
-        });
-      } else {
-        setSession({
-          protocolCode: generateProtocolCode(),
-          stage: 'hub',
-          startedAt: new Date().toLocaleString('pt-BR'),
-        });
-      }
-    } catch {
-      setSession({
-        protocolCode: generateProtocolCode(),
-        stage: 'hub',
-        startedAt: new Date().toLocaleString('pt-BR'),
-      });
-    }
-    setStep('initial_loading');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, []);
-
   return (
     <div className="flex min-h-dvh flex-col bg-slate-100 text-slate-900">
       <Header
@@ -326,7 +294,7 @@ export default function App() {
             subtitle="Verificando seu acesso e consultando a etapa atual da sua liberação de crédito."
             protocolCode={session.protocolCode}
             stages={INITIAL_LOADING_STAGES}
-            durationMs={2100}
+            durationMs={2000}
             onComplete={handleInitialComplete}
             actionLabel="Continuar"
           />
@@ -335,8 +303,7 @@ export default function App() {
         {step === 'hub' && (
           <VerificationHub
             protocolCode={session.protocolCode}
-            maskedCpf={session.maskedCpf}
-            ipMasked={session.ipMasked}
+            cpfVerified={session.stage === 'cpf_verified'}
             onStartVerification={handleStartVerification}
             onReplayInitialLoading={handleReplayInitialLoading}
           />
@@ -345,7 +312,6 @@ export default function App() {
         {step === 'cpf_entry' && (
           <CpfVerificationStep
             protocolCode={session.protocolCode}
-            existingMaskedCpf={session.maskedCpf}
             onCpfVerified={handleCpfVerified}
             onCancel={handleReturnHome}
           />
@@ -358,7 +324,7 @@ export default function App() {
             subtitle="CPF identificado. Abrindo a tela do aparelho para o processo de reconhecimento facial."
             protocolCode={session.protocolCode}
             stages={CAMERA_LOADING_STAGES}
-            durationMs={1600}
+            durationMs={1500}
             onComplete={handleCameraLoadingComplete}
           />
         )}
@@ -374,13 +340,22 @@ export default function App() {
         {step === 'analyzing' && (
           <LoadingStage
             key="analyzing-photo"
-            title="Processando foto do recebedor"
-            subtitle="Aguarde enquanto gravamos seu acesso e iniciamos a verificação da conta do recebedor."
+            title="Verificando foto do recebedor"
+            subtitle="Aguarde enquanto validamos sua fotografia. Esta verificação leva no máximo 1 minuto."
             protocolCode={session.protocolCode}
-            stages={ANALYZING_STAGES}
-            durationMs={2900}
-            photoPreviewUrl={session.capturedPhotoUrl}
-            onComplete={handleAnalysisComplete}
+            stages={PHOTO_VERIFICATION_STAGES}
+            durationMs={12000}
+            timeLimitNote="Máx. 1 min"
+            photoPreviewUrl={transientPhotoPreview}
+            onComplete={handlePhotoVerificationComplete}
+          />
+        )}
+
+        {step === 'photo_success' && (
+          <PhotoSuccessStep
+            protocolCode={session.protocolCode}
+            photoPreviewUrl={transientPhotoPreview}
+            onContinue={handlePhotoSuccessContinue}
           />
         )}
 
@@ -388,7 +363,6 @@ export default function App() {
           <AccountVerificationWaiting
             session={session}
             onRefreshStatus={handleRefreshWaitingStatus}
-            onResetSession={handleResetSession}
           />
         )}
       </main>

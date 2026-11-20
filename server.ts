@@ -12,11 +12,9 @@ interface IpSessionRecord {
   ip: string;
   protocolCode: string;
   stage: StoredStage;
-  maskedCpf?: string;
   startedAt: string;
   cpfVerifiedAt?: string;
   photoSubmittedAt?: string;
-  capturedPhotoUrl?: string;
   updatedAt: string;
 }
 
@@ -30,7 +28,15 @@ function loadSessionsFromDisk(): Map<string, IpSessionRecord> {
       const raw = fs.readFileSync(SESSIONS_FILE, 'utf-8');
       const parsed = JSON.parse(raw) as Record<string, IpSessionRecord>;
       for (const [key, value] of Object.entries(parsed)) {
-        map.set(key, value);
+        map.set(key, {
+          ip: value.ip,
+          protocolCode: value.protocolCode,
+          stage: value.stage,
+          startedAt: value.startedAt,
+          cpfVerifiedAt: value.cpfVerifiedAt,
+          photoSubmittedAt: value.photoSubmittedAt,
+          updatedAt: value.updatedAt,
+        });
       }
     }
   } catch {
@@ -108,12 +114,6 @@ function isValidCpfDigits(cpfInput: string): boolean {
   return true;
 }
 
-function formatMaskedCpf(cpfInput: string): string {
-  const d = cpfInput.replace(/\D/g, '');
-  if (d.length !== 11) return '***.***.***-**';
-  return `${d.slice(0, 3)}.***.***-${d.slice(9, 11)}`;
-}
-
 function generateProtocolCode(): string {
   const randomDigits = Math.floor(100000 + Math.random() * 900000);
   return `IV-${randomDigits}`;
@@ -122,7 +122,7 @@ function generateProtocolCode(): string {
 async function startServer() {
   const app = express();
   app.set('trust proxy', true);
-  app.use(express.json({ limit: '6mb' }));
+  app.use(express.json({ limit: '1mb' }));
 
   app.get('/api/session', (req, res) => {
     const ip = getClientIp(req);
@@ -152,11 +152,9 @@ async function startServer() {
       ipMasked: maskIpForDisplay(ip),
       protocolCode: existing.protocolCode,
       stage: existing.stage,
-      maskedCpf: existing.maskedCpf,
       startedAt: existing.startedAt,
       cpfVerifiedAt: existing.cpfVerifiedAt,
       photoSubmittedAt: existing.photoSubmittedAt,
-      capturedPhotoUrl: existing.capturedPhotoUrl,
     });
   });
 
@@ -172,6 +170,7 @@ async function startServer() {
       return;
     }
 
+    // CPF is validated only in transit and never stored
     const existing = sessions.get(ip);
     const nowFormatted = new Date().toLocaleString('pt-BR');
     const record: IpSessionRecord = {
@@ -181,11 +180,9 @@ async function startServer() {
         existing?.stage === 'account_verification'
           ? 'account_verification'
           : 'cpf_verified',
-      maskedCpf: formatMaskedCpf(cpf),
       startedAt: existing?.startedAt ?? nowFormatted,
       cpfVerifiedAt: nowFormatted,
       photoSubmittedAt: existing?.photoSubmittedAt,
-      capturedPhotoUrl: existing?.capturedPhotoUrl,
       updatedAt: new Date().toISOString(),
     };
 
@@ -196,32 +193,23 @@ async function startServer() {
       ipMasked: maskIpForDisplay(ip),
       protocolCode: record.protocolCode,
       stage: record.stage,
-      maskedCpf: record.maskedCpf,
       cpfVerifiedAt: record.cpfVerifiedAt,
     });
   });
 
   app.post('/api/session/photo', (req, res) => {
     const ip = getClientIp(req);
-    const body = req.body as { capturedPhotoUrl?: string } | undefined;
-    const capturedPhotoUrl =
-      typeof body?.capturedPhotoUrl === 'string' &&
-      body.capturedPhotoUrl.startsWith('data:image/')
-        ? body.capturedPhotoUrl
-        : undefined;
-
     const existing = sessions.get(ip);
     const nowFormatted = new Date().toLocaleString('pt-BR');
 
+    // Only IP and step status are stored; photo image is never persisted
     const record: IpSessionRecord = {
       ip,
       protocolCode: existing?.protocolCode ?? generateProtocolCode(),
       stage: 'account_verification',
-      maskedCpf: existing?.maskedCpf,
       startedAt: existing?.startedAt ?? nowFormatted,
       cpfVerifiedAt: existing?.cpfVerifiedAt,
       photoSubmittedAt: nowFormatted,
-      capturedPhotoUrl,
       updatedAt: new Date().toISOString(),
     };
 
@@ -232,29 +220,7 @@ async function startServer() {
       ipMasked: maskIpForDisplay(ip),
       protocolCode: record.protocolCode,
       stage: record.stage,
-      maskedCpf: record.maskedCpf,
       photoSubmittedAt: record.photoSubmittedAt,
-      capturedPhotoUrl: record.capturedPhotoUrl,
-    });
-  });
-
-  app.delete('/api/session', (req, res) => {
-    const ip = getClientIp(req);
-    const fresh: IpSessionRecord = {
-      ip,
-      protocolCode: generateProtocolCode(),
-      stage: 'hub',
-      startedAt: new Date().toLocaleString('pt-BR'),
-      updatedAt: new Date().toISOString(),
-    };
-    sessions.set(ip, fresh);
-    persistSessionsToDisk(sessions);
-
-    res.json({
-      ipMasked: maskIpForDisplay(ip),
-      protocolCode: fresh.protocolCode,
-      stage: fresh.stage,
-      startedAt: fresh.startedAt,
     });
   });
 
