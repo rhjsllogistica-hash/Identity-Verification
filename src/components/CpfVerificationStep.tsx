@@ -50,24 +50,31 @@ export const CpfVerificationStep: React.FC<CpfVerificationStepProps> = ({
         body: JSON.stringify({ cpf: digits }),
       });
 
-      if (!response.ok) {
-        const errPayload = (await response.json().catch(() => ({}))) as { error?: string };
-        setPhase('input');
-        lastSubmittedDigitsRef.current = '';
-        setErrorMsg(errPayload.error || 'CPF inválido. Verifique os dígitos e tente novamente.');
-        return;
-      }
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        if (response.status === 400) {
+          const errPayload = (await response.json().catch(() => ({}))) as { error?: string };
+          setPhase('input');
+          lastSubmittedDigitsRef.current = '';
+          setErrorMsg(
+            errPayload.error || 'CPF inválido. Verifique os dígitos e tente novamente.'
+          );
+          return;
+        }
 
-      const payload = (await response.json()) as {
-        protocolCode?: string;
-        maskedCpf?: string;
-        cpfVerifiedAt?: string;
-      };
-      if (payload.protocolCode) serverProtocol = payload.protocolCode;
-      if (payload.maskedCpf) serverMasked = payload.maskedCpf;
-      if (payload.cpfVerifiedAt) serverVerifiedAt = payload.cpfVerifiedAt;
+        if (response.ok) {
+          const payload = (await response.json()) as {
+            protocolCode?: string;
+            maskedCpf?: string;
+            cpfVerifiedAt?: string;
+          };
+          if (payload.protocolCode) serverProtocol = payload.protocolCode;
+          if (payload.maskedCpf) serverMasked = payload.maskedCpf;
+          if (payload.cpfVerifiedAt) serverVerifiedAt = payload.cpfVerifiedAt;
+        }
+      }
     } catch {
-      // Proceed with local validated fallback if API is temporarily unreachable
+      // Proceed with local validated fallback if API is unreachable
     }
 
     setIdentifiedMaskedCpf(serverMasked);

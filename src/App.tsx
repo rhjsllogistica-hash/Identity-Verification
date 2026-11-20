@@ -87,32 +87,76 @@ interface ApiSessionResponse {
   capturedPhotoUrl?: string;
 }
 
+const STORAGE_KEY = 'identity_verification_session_v1';
+
+function loadLocalSession(): VerificationSession | null {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as VerificationSession;
+  } catch {
+    return null;
+  }
+}
+
+function saveLocalSession(session: VerificationSession): void {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+function clearLocalSession(): void {
+  try {
+    window.localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Ignore storage errors
+  }
+}
+
 export default function App() {
   const [step, setStep] = useState<VerificationStep>('initial_loading');
-  const [session, setSession] = useState<VerificationSession>(() => ({
-    protocolCode: generateProtocolCode(),
-    stage: 'hub',
-    startedAt: new Date().toLocaleString('pt-BR'),
-  }));
-  const latestServerStageRef = useRef<ServerSessionStage>('hub');
+  const [session, setSession] = useState<VerificationSession>(() => {
+    const saved = loadLocalSession();
+    if (saved) return saved;
+    return {
+      protocolCode: generateProtocolCode(),
+      stage: 'hub',
+      startedAt: new Date().toLocaleString('pt-BR'),
+    };
+  });
+  const latestServerStageRef = useRef<ServerSessionStage>(session.stage);
+
+  useEffect(() => {
+    saveLocalSession(session);
+  }, [session]);
 
   const syncSessionFromServer = useCallback(async () => {
     try {
       const response = await fetch('/api/session', { cache: 'no-store' });
-      if (!response.ok) return null;
+      const contentType = response.headers.get('content-type') || '';
+      if (!response.ok || !contentType.includes('application/json')) return null;
+
       const data = (await response.json()) as ApiSessionResponse;
       latestServerStageRef.current = data.stage;
-      setSession((prev) => ({
-        ...prev,
-        ipMasked: data.ipMasked ?? prev.ipMasked,
-        protocolCode: data.protocolCode || prev.protocolCode,
-        stage: data.stage,
-        maskedCpf: data.maskedCpf ?? prev.maskedCpf,
-        startedAt: data.startedAt || prev.startedAt,
-        cpfVerifiedAt: data.cpfVerifiedAt ?? prev.cpfVerifiedAt,
-        photoSubmittedAt: data.photoSubmittedAt ?? prev.photoSubmittedAt,
-        capturedPhotoUrl: data.capturedPhotoUrl ?? prev.capturedPhotoUrl,
-      }));
+      setSession((prev) => {
+        // Keep local progress if backend is absent or fresh while local already progressed
+        const mergedStage =
+          data.stage === 'hub' && prev.stage !== 'hub' ? prev.stage : data.stage;
+        latestServerStageRef.current = mergedStage;
+        return {
+          ...prev,
+          ipMasked: data.ipMasked ?? prev.ipMasked,
+          protocolCode: data.protocolCode || prev.protocolCode,
+          stage: mergedStage,
+          maskedCpf: data.maskedCpf ?? prev.maskedCpf,
+          startedAt: data.startedAt || prev.startedAt,
+          cpfVerifiedAt: data.cpfVerifiedAt ?? prev.cpfVerifiedAt,
+          photoSubmittedAt: data.photoSubmittedAt ?? prev.photoSubmittedAt,
+          capturedPhotoUrl: data.capturedPhotoUrl ?? prev.capturedPhotoUrl,
+        };
+      });
       if (data.stage === 'account_verification') {
         setStep((current) =>
           current === 'hub' || current === 'cpf_entry' ? 'account_verification' : current
@@ -193,7 +237,8 @@ export default function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ capturedPhotoUrl: photoUrl }),
         });
-        if (res.ok) {
+        const contentType = res.headers.get('content-type') || '';
+        if (res.ok && contentType.includes('application/json')) {
           const data = (await res.json()) as ApiSessionResponse;
           latestServerStageRef.current = data.stage;
           setSession((prev) => ({
@@ -205,7 +250,7 @@ export default function App() {
           }));
         }
       } catch {
-        // State already updated locally
+        // State already persisted locally
       }
     },
     []
@@ -235,9 +280,11 @@ export default function App() {
 
   const handleResetSession = useCallback(async () => {
     latestServerStageRef.current = 'hub';
+    clearLocalSession();
     try {
       const res = await fetch('/api/session', { method: 'DELETE' });
-      if (res.ok) {
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
         const data = (await res.json()) as ApiSessionResponse;
         setSession({
           ipMasked: data.ipMasked,
