@@ -1,0 +1,6 @@
+{
+  "name": "Identity Verification",
+  "description": "Sistema de reconhecimento de recebedor e verificação facial para liberação de crédito.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
